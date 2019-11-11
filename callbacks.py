@@ -6,6 +6,7 @@ from autodropout import DropLinear
 import pandas as pd
 import torch
 import torch.nn as nn
+import matplotlib.pyplot as plt
 
 
 def norm2(x): return (x**2).sum()
@@ -77,9 +78,13 @@ class KLHook(HookCallback):
             self.loss = []
 
     def on_backward_begin(self, last_loss, **kwargs):
-
-        total_kl = torch.tensor(self.kls).sum()
+        total_kl = 0
+        for kl in self.kls:
+            total_kl += kl
+            
         total_loss = last_loss + total_kl
+
+
 
         if self.recording:
             self.loss.append({"total_kl": total_kl.item(), "last_loss": last_loss.item(),
@@ -92,6 +97,8 @@ class KLHook(HookCallback):
 
     def hook(self, m: nn.Module, i, o):
         "Save the latents of the bottleneck"
+        bs = o.shape[0]
+
         p = m.dp.p
         p = m.dp.plu(p)
 
@@ -103,7 +110,7 @@ class KLHook(HookCallback):
         b = m.W.bias
         norm_b = norm2(b)
 
-        kl = p * norm_w + ne + norm_b
+        kl = (p * norm_w + ne + norm_b)
 
         self.kls.append(kl)
 

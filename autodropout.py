@@ -1,6 +1,7 @@
 
 import torch
 import torch.nn as nn
+from torch.distributions import Bernoulli
 
 
 class PLU(nn.Module):
@@ -14,18 +15,8 @@ class PLU(nn.Module):
         return z
 
 
-class CustomDropout(nn.Module):
-    """Custom Dropout module to be used as a baseline for MC Dropout"""
-  def __init__(self,p,activate=True):
-    super().__init__()
-    self.activate = activate
-    self.p = p
-    
-  def forward(self,x):
-    return nn.functional.dropout(x,self.p,training=self.activate)
-
 class AutoDropout(nn.Module):
-    def __init__(self, dp=0., requires_grad=False):
+    def __init__(self, dp=0., requires_grad=False, straight_thru_grad=False):
 
         super(AutoDropout, self).__init__()
 
@@ -41,26 +32,38 @@ class AutoDropout(nn.Module):
         else:
             self.register_buffer("p", p)
 
+        self.straight_thru_grad = straight_thru_grad
+
     def forward(self, x):
         bs, shape = x.shape[0], x.shape[1:]
 
         # We make sure p is a probability
         p = self.plu(self.p)
 
-        # We sample a mask
-        m = Bernoulli(p).sample(shape)
+        ps = p.expand(shape)
+
+        m = Bernoulli(ps).sample((1,)).squeeze(0)
+
+        if self.straight_thru_grad:
+            m = ps + (m - ps).detach()
 
         # Element wise multiplication
         z = x * m
 
         return z
 
+    def extra_repr(self):
+        return 'p={}'.format(
+            self.p.item()
+        )
+
 
 class DropLinear(nn.Module):
-    def __init__(self, in_features, out_features, dp=0., bias=True, requires_grad=False):
+    def __init__(self, in_features, out_features, dp=0., bias=True, requires_grad=False, straight_thru_grad=False):
         super(DropLinear, self).__init__()
 
-        self.dp = AutoDropout(dp=dp, requires_grad=requires_grad)
+        self.dp = AutoDropout(dp=dp, requires_grad=requires_grad,
+                              straight_thru_grad=straight_thru_grad)
         self.W = nn.Linear(in_features=in_features,
                            out_features=out_features, bias=bias)
         self.W.weight.data = self.W.weight.data / self.W.weight.data.norm() * (1-dp)
